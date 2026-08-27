@@ -1,0 +1,10 @@
+[project]
+name = "flyrank-capstone-be-metered-billing"
+version = "0.1.0"
+description = "Metered billing backend"
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
