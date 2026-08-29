@@ -1,6 +1,14 @@
 """Shared pytest fixtures: in-memory SQLite DB + FastAPI TestClient + factories."""
+import os
 import uuid
+from datetime import datetime, timedelta, timezone
 
+# Point Supabase JWT verification at a known test secret BEFORE any src module
+# (which may cache Settings via lru_cache) is imported, so the test suite
+# stays hermetic — no real Supabase project or network calls required.
+os.environ.setdefault("SUPABASE_JWT_SECRET", "test-secret-do-not-use-in-prod")
+
+import jwt
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -137,5 +145,20 @@ def make_member_with_permissions(db, tenant, permission_names, role_name="TestRo
     return user, membership, role
 
 
+def make_supabase_jwt(auth_provider_id: str, secret: str | None = None) -> str:
+    """Signs a Supabase-shaped access token for tests (HS256, sub + aud +
+    exp) using the test secret configured above — no real Supabase project
+    required.
+    """
+    secret = secret or os.environ["SUPABASE_JWT_SECRET"]
+    payload = {
+        "sub": auth_provider_id,
+        "aud": "authenticated",
+        "role": "authenticated",
+        "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+    }
+    return jwt.encode(payload, secret, algorithm="HS256")
+
+
 def auth_header(user):
-    return {"Authorization": f"Bearer {user.auth_provider_id}"}
+    return {"Authorization": f"Bearer {make_supabase_jwt(user.auth_provider_id)}"}

@@ -17,6 +17,7 @@ from datetime import datetime
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
+from src.auth.supabase import decode_supabase_jwt
 from src.db.session import get_db
 from src.models.db_models import AuditLog, Membership, Permission, RolePermission, Tenant, User
 
@@ -32,12 +33,10 @@ async def get_current_actor(
 ) -> User:
     """Resolves the bearer token to a local User row.
 
-    STAND-IN IMPLEMENTATION: there is no real IdP wired in yet. We treat the
-    raw bearer token as the `auth_provider_id` directly. In production this
-    would instead verify a Supabase (or other IdP) JWT's signature/expiry and
-    extract the `sub` claim as auth_provider_id — swap that in here without
-    touching any downstream code, since everything else only depends on the
-    returned `User` row.
+    Verifies the bearer token as a Supabase Auth access token (signature +
+    audience, via decode_supabase_jwt) and extracts the `sub` claim — the
+    Supabase auth.users.id — as auth_provider_id. Everything downstream only
+    depends on the returned `User` row, unchanged from before Supabase.
     """
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="missing or malformed bearer token")
@@ -46,8 +45,8 @@ async def get_current_actor(
     if not token:
         raise HTTPException(status_code=401, detail="missing bearer token")
 
-    # STAND-IN: token IS the auth_provider_id (see docstring above).
-    auth_provider_id = token
+    claims = decode_supabase_jwt(token)
+    auth_provider_id = claims["sub"]
 
     user = db.query(User).filter(User.auth_provider_id == auth_provider_id).first()
     if not user:

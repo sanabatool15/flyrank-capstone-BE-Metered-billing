@@ -4,7 +4,7 @@
 Usage Metering & Billing Engine (FlyRank capstone)
 
 ## Stack
-FastAPI + Postgres (Docker) + Stripe test mode
+FastAPI + Supabase (Postgres + Auth) + Stripe test mode
 
 ## Architecture
 routers → services → repositories (strict layering, no skipping)
@@ -26,6 +26,16 @@ must land in its own commit (or PR) so gates can be reviewed independently:
   subscription sync — GATE: test Checkout flips a tenant Free → Pro via webhook.
 - Phase 4 (cost & finalization): cost rollups, README + diagram, EVIDENCE.md
   — GATE: /usage numbers match pinned pricing constants.
+
+## Supabase migration
+DB and auth now run on Supabase: `DATABASE_URL` points at Supabase Postgres
+(wire-compatible, same SQLAlchemy models/migrations, no schema rewrite).
+The self-rolled bearer-token stand-in was replaced with Supabase Auth —
+`get_current_actor()` verifies the bearer token as a Supabase Auth access
+token (HS256, `SUPABASE_JWT_SECRET`) and maps its `sub` claim to the
+existing `users.auth_provider_id` column; everything downstream (Membership/
+Role/Permission/AuditLog, `require_permission()`) is unchanged. Tests sign
+their own tokens against a test secret, no live Supabase project needed.
 
 ## Reference docs
 Design/spec docs live under `.claude/docs/` — read these before implementing
