@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Column,
     DateTime,
     ForeignKey,
@@ -18,7 +19,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ENUM, UUID
 from sqlalchemy.orm import relationship
 
 from src.db.session import Base
@@ -29,6 +30,11 @@ def uid() -> str:
     return str(uuid.uuid4())
 
 
+plan_enum = ENUM("free", "pro", name="plan_type")
+usage_type_enum = ENUM("api_call", "ai_tokens", name="usage_type")
+sub_status_enum = ENUM("active", "past_due", "canceled", name="sub_status")
+
+
 # ---------------------------------------------------------------------------
 # Billing / usage core
 # ---------------------------------------------------------------------------
@@ -36,53 +42,60 @@ def uid() -> str:
 
 class Tenant(Base):
     __tablename__ = "tenants"
-
     id = Column(UUID(as_uuid=False), primary_key=True, default=uid)
     name = Column(String, nullable=False)
-    plan = Column(String, nullable=False, default="free")
-    stripe_customer_id = Column(String, nullable=True, unique=True)
+    plan = Column(plan_enum, nullable=False, default="free")
+    stripe_customer_id = Column(String, unique=True, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    subscriptions = relationship("Subscription", back_populates="tenant")
     usage_events = relationship("UsageEvent", back_populates="tenant")
     memberships = relationship("Membership", back_populates="tenant")
 
 
 class Subscription(Base):
     __tablename__ = "subscriptions"
-
     id = Column(UUID(as_uuid=False), primary_key=True, default=uid)
-    tenant_id = Column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False, index=True)
-    stripe_subscription_id = Column(String, nullable=True, unique=True)
-    status = Column(String, nullable=False, default="active")
-    plan = Column(String, nullable=False)
-    price_cents = Column(Integer, nullable=False)  # integer cents only
-    created_at = Column(DateTime, default=datetime.utcnow)
+    tenant_id = Column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False)
+    stripe_subscription_id = Column(String, unique=True, nullable=False)
+    status = Column(sub_status_enum, nullable=False, default="active")
+    plan = Column(plan_enum, nullable=False)
+    current_period_end = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    tenant = relationship("Tenant", back_populates="subscriptions")
+    __table_args__ = (Index("ix_sub_tenant", "tenant_id"),)
 
 
 class UsageEvent(Base):
     __tablename__ = "usage_events"
-
     id = Column(UUID(as_uuid=False), primary_key=True, default=uid)
-    tenant_id = Column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False, index=True)
-    idempotency_key = Column(String, nullable=False, unique=True)  # required on billable actions
-    event_type = Column(String, nullable=False)
-    quantity = Column(Integer, nullable=False, default=1)
-    cost_cents = Column(Integer, nullable=False, default=0)  # integer cents only
+    tenant_id = Column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False)
+    idempotency_key = Column(String, nullable=False)
+    usage_type = Column(usage_type_enum, nullable=False)
+
+    # api_call: qty = 1 usually. ai_tokens: split by category, cents-safe ints
+    quantity = Column(Integer, nullable=False, default=0)          # api_call count
+    input_tokens = Column(Integer, nullable=False, default=0)
+    cached_input_tokens = Column(Integer, nullable=False, default=0)
+    output_tokens = Column(Integer, nullable=False, default=0)
+    reasoning_tokens = Column(Integer, nullable=False, default=0)
+
+    cost_cents = Column(BigInteger, nullable=False, default=0)     # computed at write time
     created_at = Column(DateTime, default=datetime.utcnow)
 
     tenant = relationship("Tenant", back_populates="usage_events")
 
+    __table_args__ = (
+        # THE idempotency guarantee — same tenant + same key = one row, DB-enforced not app-enforced
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_tenant_idempotency"),
+        Index("ix_usage_tenant_created", "tenant_id", "created_at"),
+    )
+
 
 class StripeEvent(Base):
-    """Global webhook dedup infra — deliberately has no tenant_id."""
-
+    """webhook dedup — Stripe event.id is globally unique"""
     __tablename__ = "stripe_events"
-
-    id = Column(String, primary_key=True)  # Stripe's own event.id
-    type = Column(String, nullable=False)
+    id = Column(String, primary_key=True)  # evt_... from Stripe, no uuid needed
+    event_type = Column(String, nullable=False)
     processed_at = Column(DateTime, default=datetime.utcnow)
 
 
