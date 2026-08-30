@@ -1,4 +1,7 @@
 """FastAPI application factory/instance."""
+import os
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from src.routers import auth as auth_router
@@ -8,8 +11,26 @@ from src.routers import usage as usage_router
 from src.routers import webhooks as webhooks_router
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Import models first so every table is registered on Base.metadata,
+    # then create any missing tables against the real engine bound in
+    # src.db.session. create_all is idempotent — it only creates missing
+    # tables, never drops/alters existing ones — so it's safe on every
+    # startup. Skipped under pytest (PYTEST_CURRENT_TEST is set by pytest
+    # for the duration of each test): the test suite builds its own
+    # in-memory SQLite engine per-test via conftest.py fixtures and must
+    # never touch the real DATABASE_URL / make network calls.
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        import src.models  # noqa: F401
+        from src.db.session import Base, engine
+
+        Base.metadata.create_all(bind=engine)
+    yield
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="Usage Metering & Billing Engine")
+    app = FastAPI(title="Usage Metering & Billing Engine", lifespan=lifespan)
 
     app.include_router(auth_router.router)
     app.include_router(usage_router.router)
