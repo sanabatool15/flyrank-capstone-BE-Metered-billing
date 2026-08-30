@@ -115,3 +115,143 @@ All three gates passed against the existing implementation with **no
 production code changes**. The quota boundary check already used the
 correct comparison (`used + request > limit`, not `>=`), so the 1000th
 call succeeds and the 1001st is rejected exactly as specified.
+
+---
+
+# EVIDENCE.md — Phase 3: Stripe Integration & Webhook Handling
+
+Evidence generated from a real, live run: `docker compose up` against the
+project's actual Supabase Postgres + Supabase Auth instance, the Stripe CLI
+(`stripe listen` / `stripe trigger` / `stripe events resend`) in **test
+mode**, and the actual Stripe-hosted Checkout page with card `4242 4242 4242
+4242`. Not a mocked/unit-test run — this is the real end-to-end flow.
+
+Two real bugs were found and fixed while producing this evidence (both
+already committed to `claude/new-session-wikeph`):
+
+1. **Missing `sslmode=require`** on the Supabase Postgres connection
+   (`src/db/session.py`) — Supabase requires TLS; connections failed
+   without it.
+2. **`StripeObject.get(...)` no longer supported** by the pinned `stripe`
+   SDK version — every webhook handler (`checkout.session.completed`,
+   `customer.subscription.updated`, `customer.subscription.deleted`) used
+   dict-style `.get()` on the event's `data.object`, which now raises
+   `AttributeError` instead of returning the value. This meant **every
+   real webhook delivery crashed with 500** and silently left tenants
+   stuck on Free even after a successful Stripe payment. Fixed in
+   `src/services/stripe_service.py` by converting to a plain dict via
+   `.to_dict()` once at the top of `handle_webhook_event`, before any
+   handler runs.
+
+## Tenant Information
+
+* **Tenant ID (`TID`)**: `608e422a-5449-4521-adf8-dbf9798d1161`
+* **Initial Plan**: `free` (1,000 API calls / 100,000 AI tokens)
+* **Final Plan**: `pro` (50,000 API calls / 5,000,000 AI tokens)
+
+## Proof 1 — Checkout Flow Initiated
+
+```bash
+curl -X POST "http://localhost:8000/tenants/608e422a-5449-4521-adf8-dbf9798d1161/checkout" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"target_plan":"pro"}'
+```
+
+**Result**: Stripe-hosted Checkout Session generated and returned as
+`checkout_url`. Payment completed on the real Stripe Checkout page using
+test card `4242 4242 4242 4242`, any future expiry, any CVC.
+
+## Proof 2 — Webhook Processing & Database Upgrade
+
+`stripe listen` forwarded the real event to the local webhook endpoint:
+
+```text
+2026-08-30 15:43:43 --> checkout.session.completed [evt_1UA6DEJ3N87X90J7hXeUrvAH]
+2026-08-30 15:43:44 <-- [200] POST http://localhost:8000/webhooks/stripe
+```
+
+Verified the actual DB state change via the `/usage` endpoint:
+
+```json
+GET http://localhost:8000/tenants/608e422a-5449-4521-adf8-dbf9798d1161/usage
+
+{
+    "period_start": "2026-08-01T00:00:00Z",
+    "period_end": "2026-09-01T00:00:00Z",
+    "api_calls": { "used": 0, "limit": 50000 },
+    "ai_tokens": {
+        "input": 0, "cached_input": 0, "output": 0, "reasoning": 0,
+        "used_total": 0, "limit": 5000000
+    },
+    "cost_cents": 0
+}
+```
+
+**Result**: `tenants.plan` flipped `free` → `pro` via the verified webhook
+(never via the `/checkout` call itself, per `API_CONTRACTS.md`).
+`api_calls.limit` is now 50,000 and `ai_tokens.limit` is now 5,000,000 —
+matching the Pro plan's pinned quota constants.
+
+## Proof 3 — Forged Signature Rejection
+
+```bash
+curl -X POST http://localhost:8000/webhooks/stripe \
+  -H "Stripe-Signature: t=123,v1=fake" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"customer.subscription.updated"}'
+```
+
+**Response**: `400 Bad Request`, body `{"detail": "invalid signature"}`.
+
+**Result**: A forged/unsigned payload is rejected before
+`stripe_service.handle_webhook_event` ever runs — `verify_and_construct_event`
+raises on signature mismatch and the router maps that straight to 400. No DB
+state changed (confirmed no change on a subsequent `/usage` call).
+
+## Proof 4 — Replay & Event Deduplication
+
+Resent the **same** already-processed event id (not a fresh `stripe
+trigger`, which mints a new event id each time and wouldn't actually test
+dedup) via the Stripe CLI:
+
+```bash
+stripe events resend evt_1UA6aaJ3N87X90J7YHrgEDdJ
+```
+
+Queried `stripe_events` directly inside the running container after the
+second delivery:
+
+```bash
+docker compose exec app python -c "
+from src.db.session import SessionLocal
+from src.models.db_models import StripeEvent
+db = SessionLocal()
+rows = db.query(StripeEvent).filter(StripeEvent.id=='evt_1UA6aaJ3N87X90J7YHrgEDdJ').all()
+print(len(rows), [r.id for r in rows])
+"
+```
+
+**Output**:
+```text
+1 ['evt_1UA6aaJ3N87X90J7YHrgEDdJ']
+```
+
+**Result**: Exactly one row exists despite two deliveries of the same event
+id — `try_insert_stripe_event`'s insert-first pattern against the unique
+primary key on `stripe_events.id` correctly deduplicated the replay, and the
+second delivery's handler body never re-ran (per `handle_webhook_event`'s
+early return on a failed insert).
+
+## Summary
+
+| Gate | Result |
+|---|---|
+| Real Checkout session created (test mode) | ✅ Pass |
+| Webhook verified + tenant flipped Free → Pro | ✅ Pass (after StripeObject fix) |
+| Forged signature rejected with 400, no state change | ✅ Pass |
+| Replayed event deduplicated (1 row, not 2) | ✅ Pass |
+
+Phase 3 gate — "test Checkout flips a tenant Free → Pro via webhook" — is
+satisfied end-to-end against live Supabase Postgres, Supabase Auth, and
+Stripe test mode.
