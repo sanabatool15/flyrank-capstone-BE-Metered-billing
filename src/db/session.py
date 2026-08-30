@@ -3,15 +3,12 @@
 Repositories are the only layer allowed to import from this module directly
 (per the routers -> services -> repositories layering rule in CLAUDE.md).
 """
-import os
-
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql+psycopg2://postgres:postgres@localhost:5432/billing",
-)
+from src.config import get_settings
+
+DATABASE_URL = get_settings().DATABASE_URL
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, future=True)
 
