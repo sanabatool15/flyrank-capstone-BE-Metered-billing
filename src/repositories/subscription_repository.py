@@ -34,6 +34,14 @@ def get_by_tenant(db: Session, tenant_id: str) -> Optional[Subscription]:
     )
 
 
+def get_subscription_by_tenant_id(db: Session, tenant_id: str) -> Optional[Subscription]:
+    """Alias of get_by_tenant with an explicit name — used by the
+    reconciliation job (src/jobs/reconcile_subscriptions.py) when no
+    Subscription row exists yet keyed by stripe_subscription_id.
+    """
+    return get_by_tenant(db, tenant_id)
+
+
 def get_active_subscription(db: Session, tenant_id: str) -> Optional[Subscription]:
     """Most recently updated subscription row for this tenant (used by
     quota_service for the 402 past_due/canceled check). None means the

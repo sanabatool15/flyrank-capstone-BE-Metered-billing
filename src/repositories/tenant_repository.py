@@ -51,6 +51,15 @@ def update_tenant_stripe_customer_id(
     return tenant
 
 
+def get_tenants_with_stripe_customer(db: Session) -> list[Tenant]:
+    """Every Tenant with a non-null stripe_customer_id — used by the
+    subscription reconciliation background job
+    (src/jobs/reconcile_subscriptions.py) to know which tenants to poll
+    Stripe for.
+    """
+    return db.query(Tenant).filter(Tenant.stripe_customer_id.isnot(None)).all()
+
+
 def update_tenant_plan(db: Session, tenant_id: str, plan: str) -> Optional[Tenant]:
     tenant = get_tenant_by_id(db, tenant_id)
     if tenant is None:

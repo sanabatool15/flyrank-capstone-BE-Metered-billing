@@ -129,6 +129,15 @@ def _handle_checkout_completed(db: Session, session_obj) -> None:
         )
 
 
+def map_status_to_plan(status: str) -> str:
+    """Map a Stripe subscription status to our plan vocabulary. Shared by
+    the webhook handler (_handle_subscription_updated) and the subscription
+    reconciliation background job (src/jobs/reconcile_subscriptions.py) so
+    the two paths can never disagree on what a given Stripe status means.
+    """
+    return "pro" if status in ("active", "past_due", "trialing") else "free"
+
+
 def _handle_subscription_updated(db: Session, sub_obj) -> None:
     from datetime import datetime, timezone
 
@@ -157,7 +166,7 @@ def _handle_subscription_updated(db: Session, sub_obj) -> None:
 
     # Map Stripe status -> our plan/status vocabulary. "canceled" plan
     # rollback is handled by the dedicated deleted-subscription event.
-    plan = "pro" if status in ("active", "past_due", "trialing") else "free"
+    plan = map_status_to_plan(status)
     sub_status = status if status in ("active", "past_due", "canceled") else "active"
 
     subscription_repository.upsert_subscription(

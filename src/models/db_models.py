@@ -173,7 +173,13 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=uid)
-    tenant_id = Column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False)
+    # nullable: some events are system/job-initiated and are not scoped to a
+    # single tenant (e.g. the reconcile_subscriptions background job's
+    # run-level failure-alert row — see
+    # .claude/docs/BACKGROUND_JOBS_DESIGN.md). Deviation from the original
+    # NOT NULL: that job's summary alert genuinely has no single tenant to
+    # attribute it to (it can span many tenants' failures in one row).
+    tenant_id = Column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=True)
     actor_user_id = Column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=True)
     # nullable actor: some events are system-initiated (webhooks, cron)
     action = Column(String, nullable=False)  # e.g. "invoice.delete"

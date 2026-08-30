@@ -1,0 +1,57 @@
+name: flyrank-capstone-be-metered-billing
+description: Usage Metering & Billing Engine (FastAPI + Supabase + Stripe test mode)
+
+run:
+  # Preferred: docker compose (matches Dockerfile/compose.yaml already in repo)
+  command: docker compose up --build
+  # Fallback for evaluators without Docker: uv-based local run
+  local_command: uv run uvicorn src.main:app --host 0.0.0.0 --port 8000
+  port: 8000
+  health_check: GET /docs   # FastAPI's auto-generated OpenAPI UI; 200 = app is up
+  env_file: .env            # must exist, copied from .env.example — see README
+
+base_url: http://localhost:8000
+
+seed:
+  command: uv run python scripts/seed.py
+  description: >
+    Creates a demo tenant ("Acme Demo"), a demo user + admin membership,
+    and prints a ready-to-use bearer token + tenant_id for curl-ing the API.
+    Idempotent — safe to re-run (see SEED_SCRIPT_DESIGN.md).
+
+test:
+  command: uv run pytest
+  coverage_command: uv run pytest --cov=src --cov-report=term-missing
+
+migrate:
+  command: uv run alembic upgrade head
+  description: >
+    Applies Alembic migrations against DATABASE_URL. Not required for the
+    app to boot (src/app.py's lifespan still runs create_all as a fallback
+    for local/sqlite convenience) but is the source of truth for schema
+    changes going forward — see MIGRATIONS_DESIGN.md.
+
+background_job:
+  description: >
+    Subscription reconciliation job — reconciles local Subscription/Tenant
+    plan state against Stripe's source of truth to catch missed/late
+    webhooks. See BACKGROUND_JOBS_DESIGN.md.
+  command: uv run python -m src.jobs.reconcile_subscriptions
+  schedule: "0 */6 * * *"   # every 6 hours; also runnable on demand
+
+docs:
+  readme: README.md
+  architecture: README.md#architecture
+  design_docs_dir: .claude/docs/
+
+stack:
+  language: python
+  python_version: ">=3.11"
+  framework: fastapi
+  package_manager: uv
+  db: postgresql (Supabase)
+  test_framework: pytest
+  payments: stripe (test mode)
+
+evidence:
+  file: md/EVIDENCE.MD
