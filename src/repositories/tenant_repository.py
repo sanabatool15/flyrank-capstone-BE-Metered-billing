@@ -12,6 +12,17 @@ from sqlalchemy.orm import Session
 from src.models.db_models import Tenant
 
 
+def create_tenant(db: Session, name: str, plan: str = "free") -> Tenant:
+    """Creates a new Tenant row. Plan is always forced to "free" by the
+    caller (tenant_service) per TENANT_CREATION.md — this function does not
+    itself enforce that, it just persists what it's given.
+    """
+    tenant = Tenant(name=name, plan=plan)
+    db.add(tenant)
+    db.flush()
+    return tenant
+
+
 def get_tenant_by_id(db: Session, tenant_id: str) -> Optional[Tenant]:
     return db.query(Tenant).filter(Tenant.id == tenant_id).first()
 

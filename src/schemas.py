@@ -98,3 +98,24 @@ class InviteMemberResponse(BaseModel):
     membership_id: str
     user_id: str
     role: str
+
+
+# ---------------------------------------------------------------------------
+# POST /tenants
+# ---------------------------------------------------------------------------
+
+
+class TenantCreateRequest(BaseModel):
+    name: str
+    plan: str = "free"  # accepted but always forced to "free" server-side
+
+
+class TenantMembershipSummary(BaseModel):
+    role: str
+
+
+class TenantCreateResponse(BaseModel):
+    tenant_id: str
+    name: str
+    plan: str
+    membership: TenantMembershipSummary

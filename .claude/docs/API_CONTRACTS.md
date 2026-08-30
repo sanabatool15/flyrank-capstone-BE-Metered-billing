@@ -2,7 +2,37 @@
 
 Every endpoint below states its required permission explicitly. Implement each
 via `Depends(require_permission("<name>"))` per `AUTHZ_DESIGN.md` — no route
-skips this except the two marked "no auth."
+skips this except the two marked "no auth," plus `POST /tenants` (documented
+exception, no tenant to resolve yet — see `TENANT_CREATION.md`).
+
+---
+
+## `POST /tenants`
+**Permission required:** none — see `TENANT_CREATION.md` for the full spec
+and why this is the one documented exception to the normal
+authenticate → membership → permission chain.
+
+Creates a new tenant, always on plan `"free"` regardless of what the request
+body's `plan` field says, and makes the caller its `admin` via a new
+`Membership`.
+
+**Body**
+```json
+{ "name": "Acme Inc", "plan": "free" }
+```
+
+**201 response**
+```json
+{
+  "tenant_id": "uuid",
+  "name": "Acme Inc",
+  "plan": "free",
+  "membership": { "role": "admin" }
+}
+```
+
+- No valid bearer token → `401`.
+- No `403` case — every authenticated user may create a tenant.
 
 ---
 
@@ -170,6 +200,7 @@ billable/metered action.
 
 | Endpoint | Permission | admin | member |
 |---|---|---|---|
+| `POST /tenants` | none (creates the first membership) | — | — |
 | `POST /generate` | `api.use` | ✅ | ✅ |
 | `GET /usage` | `usage.read` | ✅ | ✅ |
 | `POST /checkout` | `billing.manage` | ✅ | ❌ |
