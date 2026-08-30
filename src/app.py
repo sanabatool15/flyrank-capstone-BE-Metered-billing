@@ -3,6 +3,7 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from sqlalchemy.exc import OperationalError
 
 from src.routers import auth as auth_router
 from src.routers import checkout as checkout_router
@@ -26,7 +27,16 @@ async def lifespan(app: FastAPI):
         import src.models  # noqa: F401
         from src.db.session import Base, engine
 
-        Base.metadata.create_all(bind=engine)
+        try:
+            Base.metadata.create_all(bind=engine)
+        except OperationalError as exc:
+            raise RuntimeError(
+                "Unable to connect to DATABASE_URL. Verify the Supabase "
+                "project is active and copy the current connection string "
+                "from Dashboard > Connect. If this environment is IPv4-only, "
+                "use the Supavisor session pooler URL (port 5432) instead of "
+                "the direct db.<project-ref>.supabase.co URL."
+            ) from exc
     yield
 
 
