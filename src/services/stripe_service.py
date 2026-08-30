@@ -89,6 +89,12 @@ def handle_webhook_event(db: Session, event) -> None:
         return
 
     data_object = event["data"]["object"]
+    if hasattr(data_object, "to_dict"):
+        # Real Stripe events carry StripeObjects, which no longer support
+        # dict-style .get() directly (raises AttributeError) — convert once
+        # up front so every handler below can use plain dict access. Test
+        # fixtures pass plain dicts already, which don't have this method.
+        data_object = data_object.to_dict()
 
     if event_type == "checkout.session.completed":
         _handle_checkout_completed(db, data_object)
